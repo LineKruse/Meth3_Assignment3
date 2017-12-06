@@ -1,0 +1,368 @@
+---
+title: "Assignment2_Part1_VoiceInSchizophrenia"
+author: "Riccardo Fusaroli"
+date: "July 17, 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+setwd("~/Documents/Experimental Methods III/Assignment_3")
+
+#Diagnosis values: 
+#Control = 0 
+#Schizo = 1
+
+```
+
+## Assignment 2 - Part 1 - Assessing voice in schizophrenia
+
+Schizophrenia has been associated with "inappropriate" voice, sometimes monotone, sometimes croaky. A few studies indicate that pitch might be an index of schizophrenia. However, an ongoing meta-analysis of the literature (which you will have a go at in the last assignment) indicates that pitch mean and standard deviation are only weak indicators of diagnosis. Can we do better with our new fancy complex skills?
+
+The corpus you are asked to analyse is a set of voice recordings from people with schizophrenia (just after first diagnosis) and 1-1 matched controls (on gender, age, education). Each participant watched 10 videos of triangles moving across the screen and had to describe them (so you have circa 10 recordings per person). I have already extracted the pitch once every 10 milliseconds and you will have to use this data to assess differences in the voice.
+
+N.B. Question to be answered via email to Celine: can you characterize voice in schizophrenia as acoustically different? Report the methods you used to answer this question and the results from the analyses. Add a couple of lines trying to interpret the results (make sense of the difference). E.g. People with schizophrenia tend to have high-pitched voice, and present bigger swings in their prosody than controls. Add a couple of lines describing limitations of the data/analyses if any is relevant.
+
+N.B. There are looots of files to be dealt with. Probably too many for your computer. This is a challenge for you. Some (complementary) possible strategies: You can select a subset of files only (and you have to justify your choice). You can learn how to use the apply() or map() functions. You can coordinate with classmates.
+
+1. In the course of this assignment you have to first select one datafile and figure out how to:
+
+- Extract "standard" descriptors of pitch: Mean, standard deviation, range
+- Extract less "standard" descriptors of pitch you can think of (e.g. median, iqr, mean absoluted deviation, coefficient of variation)
+- Extract "complex" descriptors: recurrence quantification analysis
+
+```{r}
+library(pastecs)
+
+test_data <- read.delim("~/Documents/Experimental Methods III/Assignment_3/Pitch/Study4D1S446T8_f0.txt", header=TRUE)
+
+plot(test_data$f0)
+
+test_data$V1 = as.numeric(test_data$V1)
+test_data$V2 = as.numeric(test_data$V2)
+#This function ruins the data! 
+#FIGURE OUT A SOLUTION !!!!
+
+stat.desc(test_data$time)
+stat.desc(test_data$f0)
+
+mean(test_data$f0)
+sd(test_data$f0)
+range(test_data$f0)
+range(test_data$f0)[1]
+range(test_data$f0)[2]
+median(test_data$f0)
+#Coefficient of variance is missing! 
+
+
+#Get aboslute deviation
+mad(test_data$time)
+mad(test_data$f0)
+
+#STANDARD DESCRIPTORS: V1 - TIME: 
+#Mean = 743.5
+#Standard deviation = 429.12
+#Range = 1485
+#Median = 743.5
+#Iqr = 
+#Absolute deviation = 550.79
+#Coefficient of variation = 0.577
+
+#STANDARD DESCRIPTORS: V2 - PITCH FREQUENCY
+#Mean = 675.6
+#Standard deviation = 384.22
+#Range = 1354
+#Median = 675.5 
+#Iqr = 
+#Absolute deviation = 482.59
+#Coefficient of variation = 0.569
+
+#RQA ANALYSIS
+install.packages("tseriesChaos")
+install.packages("nonlinearTseries")
+install.packages("SparseM")
+install.packages("crqa")
+install.packages("rgl")
+
+library(rgl)
+library(tseriesChaos)
+library(SparseM)
+library(crqa)
+
+#Estimating delay parameter 
+x = mutual(test_data$f0, lag.max=50) #run average mutual information
+#Suggest that 7 is a good parameter - here the next layer reduces AMI than the previous one - less conservative choice, but our estmiates will be more precise because we have more data. 
+#Delay parameter = 7
+
+#Estimating embedding parameter 
+fnn=false.nearest(test_data$f0, m=5, d=7, t=0) #run false-nearest-neighbour analysis 
+#m = the embedding dimension D 
+#d = the delay parameter, r
+
+plot(fnn) #plot results of false-nearest neighbour analysis 
+#4 looks like a reasonable number of dimensions - after here it remains rather stable 
+
+#Estimating threshold parameter 
+rqa = crqa(test_data,test_data,embed = 4, delay = 7, radius = 5, rescale = 0, normalize = 0, mindiagline = 2, minvertline = 1) #run aqa
+#embed = embedding parameter 
+#delay = delay parameter 
+#Radius = threshold parameter, T
+#mindiagline = has to be min 2 points before it is a line 
+
+#ANOTHER SOLUTION!!!! 
+#Find the optimal parameters that produces an RR (#REC) of 4 %, by running on all pairs: 
+par = list(lgM =  50, steps = seq(1, 6, 1),  radiusspan = 100,  radiussample = 40, normalize = 0,  rescale = 0,  mindiagline = 2,  minvertline = 2,  tw = 0,  whiteline = FALSE,  recpt = FALSE,  fnnpercent = 10,  typeami = "mindip")
+
+ans = optimizeParam(test_data$f0, test_data$f0, par, min.rec = 3.5, max.rec = 4.5)
+
+ans$radius
+#Radius, threshold parameter = 19.26
+ans$emddim
+#Embedding parameter = 4
+ans$delay
+#Suggest delay parameter of 43
+#However using the plot, I chose a parameter of 7, to keep more data (less conservative value - see justification of choice above)
+
+#RUN THE RQA
+rqa = crqa(test_data,test_data,embed = 4, delay = 7, radius = 19.26, rescale = 0, normalize = 0, mindiagline = 2, minvertline = 1)
+
+#PLOT recurrence plot 
+RP = rqa$RP
+RP = matrix(as.numeric(RP), nrow=ncol(RP))
+cols=c("white", "blue4")
+image(RP, xlab = "", ylab="", col=cols)
+
+```
+2. Second you will have to turn the code into a function and loop through all the files (or even better use apply/sapply/lapply)
+- Remember to extract the relevant information from the file names (Participant, Diagnosis, Trial, Study)
+
+```{r}
+
+library(stringr)
+
+#Create empty DF to apply all information in loops to
+df = data.frame(ID=1:1339, Study = rep(NA, 1339), Trial = rep(NA, 1339), Diagnosis = rep(NA, 1339), mean = rep(NA, 1339), SD= rep(NA, 1339), range = rep(NA, 1339), median = rep(NA, 1339), abs_dev = rep(NA, 1339), Delay = rep(NA, 1339), Embed = rep(NA, 1339), Threshold = rep(NA, 1339), RR = rep(NA, 1339), L = rep(NA, 1339), DET = rep(NA, 1339))
+
+filelist = list.files("~/Documents/Experimental Methods III/Assignment_3/Pitch/", pattern = ".*.txt", full.names = TRUE)
+
+for (i in 1:10){
+  string = filelist[i]
+  df$ID[i] = str_extract(string, regex("\\d{3}")) #Extract the first match of 3 digits in a row
+  df$Study[i] = str_extract(string, regex("\\d{1}")) #Extract the first match of only 1 digit in a row
+  Trial= str_extract(string, regex("T\\d{1}")) #Extract a T followed by 1 digit
+  df$Trial[i] = str_extract(Trial, regex("\\d{1}")) #Remove the T
+  Diagnosis = str_extract(string, regex("D\\d{1}")) #Extract a D followed by one digit
+  df$Diagnosis[i] = str_extract(Diagnosis, regex("\\d{1}")) #Remove the D
+  
+  data = read.delim(filelist[i], header=TRUE)
+  data = data$f0 #We are only interested in frequency
+  
+  df$mean[i] = mean(data, na.rm = T)
+  df$SD[i] = sd(data, na.rm = T)
+  df$range[i] = (range(data, na.rm = T)[2]-range(data, na.rm = T)[1])
+  df$median[i] = median(data, na.rm=T)
+  df$abs_dev[i] = mad(data, na.rm=T) #Get absolute deviation 
+  #Coefficient of variance is missing!!!!!!!!!
+  
+  par = list(lgM =  15, steps = seq(1, 6, 1),  radiusspan = 100,  radiussample   = 40, normalize = 0,  rescale = 0,  mindiagline = 2,  minvertline = 2,  tw =   0,  whiteline = FALSE,  recpt = FALSE,  fnnpercent = 10,  typeami = "mindip")
+  
+  ans = try(optimizeParam(data, data, par, min.rec = 3, max.rec = 5))
+  
+  if (length(ans)<2){
+  df$Delay[i] = NA
+  df$Embed[i] = NA
+  df$Threshold[i] = NA
+  } else {
+  df$Delay[i] = ans$delay
+  df$Embed[i] = ans$emddim
+  df$Threshold[i] = ans$radius
+  }
+  }
+
+#We chose a more relaxed min.- and max.rec (3-5 instead of 3.5-4.5) - in the optimizeParam function
+
+#Define RQA parameters, using the median of each parameter across all files
+#We need the same parameter values for all the time series in the data in the RQA analysis - so that we can compare them. 
+delay = median(df$Delay, na.rm=T)
+embed = median(df$Embed, na.rm = T)
+radius = median(df$Threshold, na.rm = T)
+
+#RUN THE RQA on all the filelist and store the outputs in dataframe
+for (i in 1:1339){
+  ts = read.delim(filelist[i], header=TRUE)
+  ts = ts$f0
+  crqa = try(crqa(ts, ts, delay=delay, embed=embed, radius=radius,normalize=0,rescale=0,mindiagline = 2,minvertline = 2))
+  df$RR[i] = crqa$RR
+  df$L[i] = crqa$L
+  df$DET[i] = crqa$DET
+  }
+
+write.csv(df, file="pitch_data_rqa_features") #save clean dataframe with all this information
+
+
+```
+
+3. Make one model per acoustic feature and test whether you can observe significant difference due to Diagnosis. Tip: Which other fixed factors should you control for (that is, include in the model)? Which random ones?
+- Bonus points: cross-validate the model and report the betas and standard errors from all rounds to get an idea of how robust the estimates are. 
+3a. Is study a significant predictor in these models? What should you infer from this? Does study interact with diagnosis? What should you infer from this?
+
+```{r}
+library(lme4)
+library(lmerTest)
+library(MuMIn)
+
+data <- read.csv("~/Documents/Experimental Methods III/Assignment_3/emergency_data.csv")
+
+m = lmerTest::lmer(rqa_REC ~ diagnosis + trial+ (1+diagnosis+scale(trial)|participant), data)
+summary(m)
+#With parameters set at.... Schizo participants does not have a significantly different recurrence rate compared to the control group, beta=0.64, p=.08, SE=0.36. 
+m_study = lmerTest::lmer(rqa_REC ~ diagnosis+study +(1+diagnosis+scale(trial)|participant), data)
+summary(m_study)
+#Study is not a significant predictor of recurrence rate, beta=0.22, p=.65, SE=0.48.
+m_study_int = lmerTest::lmer(rqa_REC ~ diagnosis*study +(1+diagnosis+scale(trial)|participant), data)
+summary(m_study_int)
+#Study and diagnosis does not interact in this model 
+
+m2 = lmerTest::lmer(rqa_DET ~ diagnosis+trial+ +(1+diagnosis+scale(trial)|participant), data)
+summary(m2)
+#With parameters set at.... Schizo participants have a determinism of -3.61 compared to the control group,which is a non-significant difference, p=0.06, SE=1.86.
+m2_study = lmerTest::lmer(rqa_DET ~ diagnosis + study +(1+diagnosis+scale(trial)|participant), data)
+summary(m2_study)
+#Study is a significant predictor of determinism, beta=6.54, p<.01, SE=2.3. 
+m2_study_int = lmerTest::lmer(rqa_DET ~ diagnosis*study +(1+diagnosis+scale(trial)|participant), data)
+summary(m2_study_int)
+#Study and diagnosis does not interact in this model 
+
+m3 = lmerTest::lmer(rqa_maxL ~ diagnosis+trial+ +(1+diagnosis+scale(trial)|participant), data)
+summary(m3)
+#With parameters set at.... Schizo participants have a maxL of -120.89 compared to the control group, which is a significant difference, p<.05, SE=59.8. 
+m3_study = lmerTest::lmer(rqa_maxL ~ diagnosis + study +(1+diagnosis+scale(trial)|participant), data)
+summary(m3_study)
+#Study is a significant predictor of max length of diagnoal line, beta=159.87, p<.05, SE=63.14.
+m3_study_int = lmerTest::lmer(rqa_maxL ~ diagnosis*study +(1+diagnosis+scale(trial)|participant), data)
+summary(m3_study_int)
+#Study and diagnosis does not interact in this model 
+
+m4 = lmerTest::lmer(rqa_L ~ diagnosis +trial+(1+diagnosis+scale(trial)|participant), data)
+summary(m4)
+#With parameters set at.... Schizo participants have an average of the diagonal lines (L) of 0.13 more than the control group, which is a non-sigificant difference, p=.36, SE=0.14. 
+m4_study = lmerTest::lmer(rqa_L ~ diagnosis + study +(1+diagnosis+scale(trial)|participant), data)
+summary(m4_study)
+#Study is not a significant predictor of average length of diagonal lines (L), beta=-0.34, p=.11, SE=0.21. 
+m4_study_int = lmerTest::lmer(rqa_L ~ diagnosis*study +(1+diagnosis+scale(trial)|participant), data)
+summary(m4_study_int)
+#Study and diagnosis does not interact in this model 
+
+m5 = lmerTest::lmer(rqa_ENTR ~ diagnosis+trial+ +(1+diagnosis+scale(trial)|participant), data)
+summary(m5)
+#With parameters set at... Schizo participants have an entropy of -0.08 compared to the control group, which is a non-significant difference, p=.06, SE=0.04. 
+m5_study = lmerTest::lmer(rqa_ENTR ~ diagnosis+study +(1+diagnosis+scale(trial)|participant), data)
+summary(m5_study)
+#Study is a significant predictor of entrophy, beta=0.14,  p<.05, SE=0.06. 
+m5_study_int = lmerTest::lmer(rqa_ENTR ~ diagnosis*study +(1+diagnosis+scale(trial)|participant), data)
+summary(m5_study_int)
+#Study and diagnosis does not interact in this model 
+
+m6 = lmerTest::lmer(rqa_TT ~ diagnosis +trial+(1+diagnosis+scale(trial)|participant), data)
+summary(m6)
+#With parameters set at... Shizo participants have a trapping time of -0.27 compared to the control group, which is a significant difference, p<.05, SE=0.13. 
+m6_study = lmerTest::lmer(rqa_TT ~ diagnosis+study +(1+diagnosis+scale(trial)|participant), data)
+summary(m6_study)
+#Study is a significant predictor of trapping-time, 0.433, p<.05, SE=0.18. 
+m6_study_int = lmerTest::lmer(rqa_TT ~ diagnosis*study +(1+diagnosis+scale(trial)|participant), data)
+summary(m6_study_int)
+#Study and diagnosis does not interact in this model 
+
+m7 = lmerTest::lmer(rqa_LAM ~ diagnosis+trial+ +(1+diagnosis+scale(trial)|participant), data)
+summary(m7)
+#With parameters set at... Shchizo participants have a laminarity of -4.66 compared to the control group, which is a significant difference, p<.05, SE=1.75. 
+m7_study = lmerTest::lmer(rqa_LAM ~ diagnosis+study +(1+diagnosis+scale(trial)|participant), data)
+summary(m7_study)
+#Study is a significant predictor of laminarity, beta=8.52, p<.01, SE=2.8.
+m7_study_int = lmerTest::lmer(rqa_LAM ~ diagnosis*study +(1+diagnosis+scale(trial)|participant), data)
+summary(m7_study_int)
+#Study and diagnosis does not interact in this model
+
+m8 = lmerTest::lmer(mean ~ diagnosis +trial+(1+diagnosis+scale(trial)|participant), data)
+summary(m8)
+#With parameters set at... Schizo participants have a mean pitch value of 15.2 higher than the control group, which is a significant difference, p<.001, SE=4.24. 
+m8_study = lmerTest::lmer(mean ~ diagnosis + study +(1+diagnosis+scale(trial)|participant), data)
+summary(m8_study)
+#Study is a significant predictor of mean pitch, beta=-26.0, p<.05, SE=10.5. 
+m8_study_int = lmerTest::lmer(mean ~ diagnosis * study +(1+diagnosis+scale(trial)|participant), data)
+summary(m8_study_int)
+#Study and diagnosis does not interact in this model 
+
+m9 = lmerTest::lmer(range ~ diagnosis +trial+(1+diagnosis+scale(trial)|participant), data)
+summary(m9)
+#With parameters set at... Schizo participants have a pitch range of -5.67 compared to the control group, which is a non-significant difference, p=.47, SE=7.78. 
+m9_study = lmerTest::lmer(range ~ diagnosis + study +(1+diagnosis+scale(trial)|participant), data)
+summary(m9_study)
+#Study is not a significant predictor of pitch range, beta=11.98, p=0.33, SE=12.3. 
+
+#REGARDING CHOICE OF RANDOM EFFECTS
+#Fixed factors: 
+# - Diagnosis (after accounted for variances in the ID matches - the slopes between diagnosis 0 and 1 are allowed to differ, as well as the the intercept is allowed to differ for each ID - in the random effects)
+# - Trial (we still expect that there might be a systematic effect of the changes over time)
+
+#Random factors: 
+# - subject ID (as we have several datapoints for each subject - we allow the intercept for each ID to differ)
+#There are two participants with each ID number (one with diagnosis=0 and one with diagnosis=1, who are matched on all parameters except from Diagnosis -    so we need to tell the model, that every ID number have two different participants - so we put Diagnosis over the ID, and we allow the differneces between the matches to vary (e.g. the differences between the ID's 101, and the ID's 102)) - And when this is accounted for we look at the fixed effect of diagnosis (which is why it is also in the model as fixed effect)
+# - trial (time) - generally we expect an unsystematic effect of trial (e.g. if people get tired along with timw)
+# - We put trial and DIagnosis in the same random effect, to allow the two slopes to be correlated (if we put them seperately we would assume they were not correlated)
+# Could potentially include study as random effect (controlling for study variability,  e.g. if the algorithm to extract the pitch were slightly different at each study) - however, most unsystematic variance is already accounted for at the ID level, and more complex models needs more power (higher risk of overfitting) - so I chose not to include this. 
+
+r.squaredGLMM(m)
+#Check the marginal variance explained (only by fixed effects)
+#Check the conditional variance explained (by the entire model - this generally increases as more parameters are added - does not take into account potential overfitting)
+
+
+
+#CROSS-VALIDATION
+#Run the cross-validation with 4 folds 
+#Make the cross validation on both model 1 and model 3 (as model 3 in the anova is significantly better predicter - use this cross validation to check for overfitting)
+library(Metrics)
+library(caret)
+
+data$participant = as.factor(data$participant)
+folds = createFolds(unique(data$participant), k=4)
+
+performance = c()
+for (i in 1:4){
+  data = data[!data$participant%in%folds[[i]],]
+  test = data[data$participant%in%folds[[i]],]
+  model = m
+  test_error = predict(model, test, allow.new.levels=T)
+  output = Metrics::rmse(test$rqa_REC, test_error)
+  performance = c(performance, output)
+  }
+performance
+mean(performance)
+
+performance_m3 = c()
+for (i in 1:4){
+  data = data[!data$participant%in%folds[[i]],]
+  test = data[data$participant%in%folds[[i]],]
+  model = m3
+  test_error = predict(model, test, allow.new.levels=T)
+  output = Metrics::rmse(test$rqa_REC, test_error)
+  performance_m3 = c(performance_m3, output)
+  }
+performance_m3
+mean(performance_m3)
+
+#In the second part (A3_P2) we are taking a predictive approach, to see whether knowing rr and L can predict the diagnsosis (schizophrenia or not)
+
+```
+
+4. Bonus Question: Compare effect size of diagnosis across the different measures. Which measure seems most sensitive?
+- Tip: to compare across measures you need to put all of them on the same scale, that is, you need to "standardize" them (z-score)
+
+5. Bonus question. In the Clinical Info file you have additional information about the participants. Which additional parameters (e.g. age, gender) should we control for? Report the effects.
+
+6. Write a paragraph reporting methods and results
+
+[Next assignment: can we use these measures to build a tool that diagnoses people from voice only?]
+
+## N.B. Remember to save the acoustic features of voice in a separate file, so to be able to load them next time

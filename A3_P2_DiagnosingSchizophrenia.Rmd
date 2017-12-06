@@ -1,0 +1,284 @@
+---
+title: "Assignment 3 - Part 2 - Diagnosing Schizophrenia from Voice"
+author: "Line Kruse"
+date: "Nov. 10th, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+```
+
+```{r}
+
+library(tidyverse)
+library(pastecs)
+library(lme4)
+library(caTools)
+library(ggplot2)
+library(caret)
+library(e1071)
+library(boot)
+library(stats)
+library(pROC) 
+
+install.packages("pacman")
+library(pacman)
+p_load(tidyverse, pastecs, lme4, caTools, ggplot2, caret, e1071, boot, stats, pROC)
+
+```
+
+## Assignment 3 - Diagnosing schizophrenia from voice
+
+In the previous part of the assignment you generated a bunch of "features", that is, of quantitative descriptors of voice in schizophrenia, focusing on pitch.
+In the course of this assignment we will use them to try to automatically diagnose schizophrenia from voice only, that is, relying on the set of features you produced last time, we will try to produce an automated classifier.
+
+### Question 1
+Build a logistic regression to see whether you can diagnose schizophrenia from pitch range only.
+
+Calculate the different performance measures (accuracy, sensitivity, specificity, PPV, NPV, ROC curve) on a logistic regression using the full dataset. Don't forget the random effects!
+
+Then cross-validate the logistic regression and re-calculate performance on the testing folds. N.B. The cross-validation functions you already have should be tweaked: you need to calculate these new performance measures.
+
+N.B. the predict() function generates probabilities (the full scale between 0 and 1). A probability > .5 indicates a choice of 1, below a choice of 0.
+N.B. you need to decide whether calculate performance on each single test fold or save all the prediction for test folds in one datase, so to calculate overall performance.
+N.B. Now you have two levels of structure: subject and study. Should this impact your cross-validation?
+
+```{r}
+
+setwd("~/Documents/Experimental Methods III/Assignment_3")
+data_rqa = read.csv("~/Documents/Experimental Methods III/Assignment_3/emergency_data.csv")
+View(data_rqa)
+
+```
+
+```{r}
+#Plot the pitch range for schizphrenia vs. control group
+ggplot(data_rqa,aes(range,diagnosis,colour=diagnosis))+geom_point()+theme_classic()
+
+# logistic regression model 
+model = glmer(diagnosis ~ scale(range) + (trial|participant), data_rqa ,family="binomial")
+summary(model)
+
+# prediction, probabilities 
+data_rqa["prediction"] <- predict(model, type = "response")
+data_rqa$prediction = inv.logit(data_rqa$prediction)
+
+# roc curve
+rocCurve <- roc(response = data_rqa$diagnosis,   predictor = data_rqa$prediction) 
+auc(rocCurve) 
+ci (rocCurve) 
+plot(rocCurve, legacy.axes = TRUE)  
+
+# confusion matrix - performance measures
+data_rqa$prediction[data_rqa$prediction>0.5]="schizophrenia" 
+data_rqa$prediction[data_rqa$prediction<=0.5]="control"
+confusionMatrix(data = data_rqa$prediction, reference = data_rqa$diagnosis, positive = "schizophrenia")
+
+
+
+```
+
+```{r}
+# cross validation
+
+result_df <- matrix(NA,nrow=5,ncol=4)
+colnames(result_df) <- c("accuracy","sensitivity","specificity","area_under_curve")
+
+data_rqa$participant <- as.factor(data_rqa$participant)
+subjects <- unique(data_rqa$participant)
+folds <- createFolds(subjects,k=5)
+
+k=5
+for (i in 1:k) {
+  train_data <- filter(data_rqa, !(as.numeric(participant) %in% folds[[i]])) 
+  test_data <- filter(data_rqa, as.numeric(participant) %in% folds[[i]])
+  
+  model = glmer(diagnosis ~ scale(range) + (1|study), train_data,family="binomial")
+  
+  predictions_list <- predict(model, newdata=test_data, allow.new.levels =T) %>% 
+  inv.logit()
+  
+  rocCurve <- roc(response = test_data$diagnosis,   predictor = predictions_list)
+  area_under_curve <- auc(rocCurve)
+  
+  predictions_list[predictions_list>0.5]="schizophrenia" 
+  predictions_list[predictions_list<=0.5]="control"
+  matrix <- confusionMatrix(data = predictions_list, reference = test_data$diagnosis, positive = "schizophrenia")
+  
+  accuracy <- matrix$overall[1] 
+  sensitivity <- matrix$byClass[1]
+  specificity <- matrix$byClass[2] 
+  
+  result_df[i,] <- c(accuracy,sensitivity,specificity, area_under_curve)
+  
+}
+  
+accuracy <- mean(result_df[,1])
+sensitivity <- mean(result_df[,2])
+specificity <- mean(result_df[,3])
+area_under_curve <- mean(result_df[,4]) 
+
+means<- c(accuracy,sensitivity,specificity,area_under_curve)
+performance_measures <- rbind(result_df,means)
+
+# random effects: only study intercept variation - since diagnosis proportion might be different in the two studies. probability of diagnosis does not change over trial. participant are matched and does not predict (only a number). 
+
+```
+
+### Question 2
+
+Which single predictor is the best predictor of diagnosis?
+```{r}
+
+# which predictor on its own is the best possible one? DET? REC? ADL? MDL?
+# cross validation
+
+
+single_measure_df <- matrix(NA,nrow=5,ncol=4)
+colnames(single_measure_df) <- c("accuracy","sensitivity","specificity","area_under_curve")
+
+data_rqa$participant <- as.factor(data_rqa$participant)
+subjects <- unique(data_rqa$participant)
+folds <- createFolds(subjects,k=5)
+
+k=5
+for (i in 1:k) {
+  train_data <- filter(data_rqa, !(as.numeric(participant) %in% folds[[i]])) 
+  test_data <- filter(data_rqa, as.numeric(participant) %in% folds[[i]])
+  
+  model = glmer(diagnosis ~ scale(rqa_LAM) + (1|study), train_data,family="binomial")
+  
+  predictions_list <- predict(model, newdata=test_data, allow.new.levels =T) %>% 
+  inv.logit() #Transforms outcomes into probabilities 
+  
+  rocCurve <- roc(response = test_data$diagnosis,   predictor = predictions_list)
+  area_under_curve <- auc(rocCurve)
+  
+  predictions_list[predictions_list>0.5]="schizophrenia" 
+  predictions_list[predictions_list<=0.5]="control"
+  matrix <- confusionMatrix(data = predictions_list, reference = test_data$diagnosis, positive = "schizophrenia")
+  
+  accuracy <- matrix$overall[1] 
+  sensitivity <- matrix$byClass[1]
+  specificity <- matrix$byClass[2] 
+  
+  single_measure_df[i,] <- c(accuracy,sensitivity,specificity, area_under_curve)
+  
+}
+  
+accuracy <- mean(single_measure_df[,1])
+sensitivity <- mean(single_measure_df[,2])
+specificity <- mean(single_measure_df[,3])
+area_under_curve <- mean(single_measure_df[,4]) 
+
+means<- c(accuracy,sensitivity,specificity,area_under_curve)
+single_performance_measures <- rbind(single_measure_df,means)
+means
+# range: accuracy: 0.51 sens: 0.36 spec: 0.68 auc: 0.57
+# rqa_REC: acc: 0.52 sens: 0.28 spec: 0.75 auc: 0.55
+# rqa_DET: acc: 0.54 sens: 0.46 spec: 0.61 auc: 0.58
+# rqa_maxL: acc: 0.56 sens: 0.61 spec: 0.53 auc: 0.59
+# rqa_L: acc: 0.49 sens: 0.18 spec: 0.84 auc: 0.56
+# rqa_TT: acc: 0.51 sens: 0.47 spec: 0.54 auc: 0.62
+# rqa_ENTR: acc: 0.53 sens: 0.47 spec: 0.59 auc: 0.54
+# rqa_LAM: acc: 0.54 sens: 0.44 spec: 0.65 auc: 0.59
+
+#Accoring to this cross-validation of models for each single predictor, trapping-time (TT) seems to be the best single predictor of diagnosis - highest AUC 
+
+```
+
+### Question 3
+
+Now it's time to go wild! Use all (voice-related) variables and interactions you can think of. Compare models and select the best performing model you can find.
+
+Remember:
+- Cross-validation or AIC are crucial to build the best model!
+- After choosing the model, train it on all the data you have
+- Save the model: save(modelName, file = "BestModelForever.rda")
+- Create a Markdown that can: a) extract the features from new pitch files (basically your previous markdown), b) load your model (e.g. load("BestModelForever.rda")), and c) predict the diagnosis in the new dataframe.
+Send it to Celine and Riccardo by Monday (so they'll have time to run it before class)-
+
+```{r}
+#which combination is best? comparing models by out of sample error from cross validation? 
+# what are the coefficients on this model? check on all data.  
+
+single_measure_df <- matrix(NA,nrow=5,ncol=4)
+colnames(single_measure_df) <- c("accuracy","sensitivity","specificity","area_under_curve")
+
+data_rqa$participant <- as.factor(data_rqa$participant)
+subjects <- unique(data_rqa$participant)
+folds <- createFolds(subjects,k=5)
+
+k=5
+for (i in 1:k) {
+  train_data <- filter(data_rqa, !(as.numeric(participant) %in% folds[[i]])) 
+  test_data <- filter(data_rqa, as.numeric(participant) %in% folds[[i]])
+  
+  model = glmer(diagnosis ~ scale(mean)*scale(range)+scale(rqa_REC)+(1|study), train_data,family="binomial")
+  
+  predictions_list <- predict(model, newdata=test_data, allow.new.levels =T) %>% 
+  inv.logit() #Transforms outcomes into probabilities 
+  
+  rocCurve <- roc(response = test_data$diagnosis,   predictor = predictions_list)
+  area_under_curve <- auc(rocCurve)
+  
+  predictions_list[predictions_list>0.5]="schizophrenia" 
+  predictions_list[predictions_list<=0.5]="control"
+  matrix <- confusionMatrix(data = predictions_list, reference = test_data$diagnosis, positive = "schizophrenia")
+  
+  accuracy <- matrix$overall[1] 
+  sensitivity <- matrix$byClass[1]
+  specificity <- matrix$byClass[2]
+  
+  single_measure_df[i,] <- c(accuracy,sensitivity,specificity, area_under_curve)
+  
+}
+
+
+
+accuracy <- mean(single_measure_df[,1])
+sensitivity <- mean(single_measure_df[,2])
+specificity <- mean(single_measure_df[,3])
+area_under_curve <- mean(single_measure_df[,4]) 
+
+means<- c(accuracy,sensitivity,specificity,area_under_curve)
+single_performance_measures <- rbind(single_measure_df,means)
+means
+
+
+#RESULTS 
+#A model including the predictors: mean and range interaction plus REC, seems to have the best predictive performance, AUC = 0.658. 
+model = glmer(diagnosis ~ scale(mean)*scale(range)+ scale(rqa_REC)+(1|study), data_rqa,family="binomial")
+summary(model)
+#Interaction: beta=0.26, p<.01, SE=0.08
+#REC: beta=0.29, p<.01, SE=0.09
+
+#Save the model: 
+save(model, file = "model_predict_schizophrenia.rda")
+
+inv.logit(-0.11331)
+
+```
+
+### Question 4: Report the results
+
+METHODS SECTION: how did you analyse the data?
+- Used inv.logit - transform the log odds from the predictions into probabilities
+- We compare them by checking the error??? - area under the curve in cross validation
+- Regarding choice of random effects: Study might affect your likelihood of being schizo - because there might be more schizo participants in one study than another (and vice versa). Trial is not relevant to include as random effect, because it does not have an effect on the likelihood of being schizophrenic - all participants have the same number of trials (instead, for instance, it might have an effect on pitch - but not on diagnosis)
+
+RESULTS SECTION: can you diagnose schizophrenia based on voice? which features are used? Comment on the difference between the different performance measures.
+- Which kind of error does the model make - look at sensitivity/specificity (higher sensitivity = overdiagnosing, higher specificity=underdiagnosing)
+- Comment on the predictors used in the best model - what does this say about the voice in schizophrenia 
+
+
+### Bonus question 5
+
+You have some additional bonus data involving speech rate, pauses, etc. Include them in your analysis. Do they improve classification?
+
+### Bonus question 6
+
+Logistic regression is only one of many classification algorithms. Try using others and compare performance. Some examples: Discriminant Function, Random Forest, Support Vector Machine, etc. The package caret provides them.
